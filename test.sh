@@ -17,7 +17,7 @@ opencode --version
 gcloud --version
 aws --version
 terraform version
-ansible --version
+ansible --version >/dev/null 2>&1
 podman --version
 rg --version
 jq --version
