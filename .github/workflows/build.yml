@@ -1,0 +1,78 @@
+name: build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  schedule:
+    - cron: '41 7 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Clone
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          git init -q .
+          git -c http.extraHeader="Authorization: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)" \
+            fetch -q --depth 1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$GITHUB_REF"
+          git checkout -q FETCH_HEAD
+
+      - name: Build
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}:latest-$ARCH" >> "$GITHUB_ENV"
+          docker build --pull --no-cache \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            -t "ghcr.io/${GITHUB_REPOSITORY,,}:latest-$ARCH" .
+
+      - name: Test
+        run: docker run --rm -v "$PWD/test.sh:/test.sh:ro" "$IMAGE" sh /test.sh
+
+      - name: Test with a mounted home
+        run: |
+          mkdir -m 777 home
+          docker run --rm --user 1000:1000 -v "$PWD/home:/home/dev" \
+            -v "$PWD/test.sh:/test.sh:ro" "$IMAGE" sh /test.sh
+
+      - name: Push
+        if: github.event_name != 'pull_request'
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE"
+
+  manifest:
+    if: github.event_name != 'pull_request'
+    needs: image
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Publish
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker buildx imagetools create -t "$image:latest" \
+            "$image:latest-amd64" "$image:latest-arm64"
