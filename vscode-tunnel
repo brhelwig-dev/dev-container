@@ -1,0 +1,4 @@
+#!/bin/sh
+# Start the VS Code tunnel server. The first run asks for a GitHub device login.
+set -eu
+exec code tunnel --accept-server-license-terms --name "${TUNNEL_NAME:-$(hostname)}"
