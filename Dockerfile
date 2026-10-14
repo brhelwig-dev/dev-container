@@ -70,7 +70,7 @@ RUN ln -s bun /usr/local/bin/bunx \
 RUN UV_TOOL_DIR=/usr/local/share/uv/tools \
     UV_TOOL_BIN_DIR=/usr/local/bin \
     UV_PYTHON_INSTALL_DIR=/usr/local/share/uv/python \
-    uv tool install --with-executables-from ansible-core ansible
+    uv tool install --python 3.13 --with-executables-from ansible-core ansible
 
 RUN case "$(uname -m)" in \
         x86_64) code_arch=x64 ;; \
