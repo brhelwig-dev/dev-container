@@ -17,7 +17,7 @@ opencode --version
 gcloud --version
 aws --version
 terraform version
-ansible --version >/dev/null 2>&1
+ansible --version >/tmp/ansible.out 2>&1 || { cat /tmp/ansible.out; exit 1; }
 podman --version
 rg --version
 jq --version
