@@ -46,6 +46,21 @@ conf_set() {
 	mv "$3.tmp" "$3"
 }
 
+check_runtime() {
+	case $1 in
+	podman | docker | container) ;;
+	*) die "runtime must be podman, docker or container, not '$1'" ;;
+	esac
+}
+
+mount_cwd() {
+	case $PWD in
+	*:* | *"
+"*) die "cannot mount a directory whose path has a colon or a newline; use --no-mount" ;;
+	esac
+	mount=$PWD
+}
+
 default_runtime() {
 	r=${DEVC_RUNTIME:-$(conf_get runtime "$config_file")}
 	if [ -z "$r" ]; then
@@ -57,6 +72,7 @@ default_runtime() {
 		done
 	fi
 	[ -n "$r" ] || die "no container runtime found; install podman, docker or container"
+	check_runtime "$r"
 	echo "$r"
 }
 
@@ -70,6 +86,7 @@ load_env() {
 	run_args=$(conf_get run_args "$config_file")
 	if [ -f "$env_file" ]; then
 		runtime=$(conf_get runtime "$env_file")
+		check_runtime "$runtime"
 		mount=$(conf_get mount "$env_file")
 	else
 		runtime=
@@ -127,7 +144,7 @@ cmd_up() {
 	if [ ! -f "$env_file" ]; then
 		runtime=$(default_runtime)
 		if [ -z "$no_mount" ]; then
-			mount=$PWD
+			mount_cwd
 		fi
 		write_env
 	fi
@@ -200,10 +217,10 @@ cmd_rebuild() {
 	if [ -n "$no_mount" ]; then
 		mount=
 	elif [ -n "$remount" ]; then
-		mount=$PWD
+		mount_cwd
 	fi
 	write_env
-	rt image pull "$image" || echo "devc: pull failed; using the local image" >&2
+	rt image pull "$image" >/dev/null || echo "devc: pull failed; using the local image" >&2
 	remove_container
 	create
 }
@@ -229,12 +246,7 @@ cmd_config() {
 	1) conf_get "$1" "$config_file" ;;
 	2)
 		case $1 in
-		runtime)
-			case $2 in
-			podman | docker | container) ;;
-			*) die "runtime must be podman, docker or container" ;;
-			esac
-			;;
+		runtime) check_runtime "$2" ;;
 		image | run_args) ;;
 		*) die "unknown key $1; keys are runtime, image and run_args" ;;
 		esac
