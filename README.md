@@ -20,6 +20,7 @@ ghcr.io/brhelwig-dev/dev-container:latest
 | `bun`, `bunx` | [`oven/bun`](https://hub.docker.com/r/oven/bun) |
 | `claude`, `codex`, `opencode` | npm, through `bun install -g` |
 | `ansible` | PyPI, through `uv tool install` |
+| `go` | [`golang`](https://hub.docker.com/_/golang) |
 | Rust stable with `clippy` and `rustfmt` | [rustup](https://rustup.rs), in `/usr/local/rustup` |
 | `code` | [VS Code CLI](https://code.visualstudio.com/docs/remote/tunnels) |
 | `vscode-tunnel` | Starts the tunnel server, see below |
@@ -60,6 +61,6 @@ To keep the tunnel running, start it detached: `podman exec -d dev vscode-tunnel
 The [workflow](.github/workflows/build.yml) builds the image on amd64 and arm64 runners,
 runs [`test.sh`](test.sh) in the image, and with an empty home mounted. It pushes `latest`
 from `main` and once a day, which also refreshes Debian packages, `claude`, `codex`,
-`opencode`, `ansible`, `aws`, `code` and Rust. The `uv` and `bun` images are pinned in the
+`opencode`, `ansible`, `aws`, `code` and Rust. The `uv`, `bun` and `golang` images are pinned in the
 `Dockerfile`, and [Dependabot](.github/dependabot.yml) opens a weekly pull request when
 one has a new release.

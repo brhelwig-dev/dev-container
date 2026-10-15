@@ -8,6 +8,7 @@ mise --version
 uv --version
 bun --version
 bunx --version
+go version
 rustc --version
 cargo clippy --version
 cargo fmt --version

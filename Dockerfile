@@ -58,6 +58,7 @@ RUN install -d -m 0755 /etc/apt/keyrings \
 
 COPY --from=ghcr.io/astral-sh/uv:0.13.1 /uv /uvx /usr/local/bin/
 COPY --from=oven/bun:1.4.3-debian /usr/local/bin/bun /usr/local/bin/bun
+COPY --from=golang:1.27.2-bookworm /usr/local/go /usr/local/go
 
 RUN ln -s bun /usr/local/bin/bunx \
     && mkdir /usr/local/bun-node-fallback-bin \
@@ -107,7 +108,7 @@ RUN useradd --create-home --uid 1000 --shell /usr/bin/zsh dev \
 ENV HOME=/home/dev \
     RUSTUP_HOME=/usr/local/rustup \
     DISABLE_AUTOUPDATER=1 \
-    PATH=/home/dev/.cargo/bin:/home/dev/.local/bin:/home/dev/.local/share/mise/shims:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bun-node-fallback-bin
+    PATH=/home/dev/go/bin:/usr/local/go/bin:/home/dev/.cargo/bin:/home/dev/.local/bin:/home/dev/.local/share/mise/shims:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bun-node-fallback-bin
 
 USER dev
 WORKDIR /home/dev
