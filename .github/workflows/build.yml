@@ -37,6 +37,9 @@ jobs:
             fetch -q --depth 1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$GITHUB_REF"
           git checkout -q FETCH_HEAD
 
+      - name: Shellcheck
+        run: shellcheck cli/devc cli/install.sh
+
       - name: Build
         env:
           ARCH: ${{ matrix.arch }}
@@ -54,6 +57,20 @@ jobs:
           mkdir -m 777 home
           docker run --rm --user 1000:1000 -v "$PWD/home:/home/dev" \
             -v "$PWD/test.sh:/test.sh:ro" "$IMAGE" sh /test.sh
+
+      - name: Test devc
+        env:
+          DEVC_IMAGE: localhost/devc-ci
+          DEVC_RUNTIME: docker
+        run: |
+          docker tag "$IMAGE" "$DEVC_IMAGE"
+          cli/devc up -n ci
+          cli/devc shell -n ci sh -c 'test "$PWD" = "$1" && test -f Dockerfile && touch ~/x' sh "/workspaces/${PWD##*/}"
+          cli/devc ls
+          cli/devc rebuild -n ci
+          cli/devc shell -n ci test -f /home/dev/x
+          cli/devc rm -n ci --purge -y
+          test ! -e ~/.local/share/devc/ci
 
       - name: Push
         if: github.event_name != 'pull_request'

@@ -1,0 +1,328 @@
+#!/bin/sh
+set -eu
+
+raw_url=https://raw.githubusercontent.com/brhelwig-dev/dev-container/main
+config_file=${XDG_CONFIG_HOME:-$HOME/.config}/devc/config
+data_dir=${XDG_DATA_HOME:-$HOME/.local/share}/devc
+
+usage() {
+	cat <<'EOF'
+Usage: devc [COMMAND] [-n NAME] [OPTIONS]
+
+Commands:
+  shell [CMD...]       Open zsh (or run CMD) in the environment, starting it first (default)
+  up [--no-mount]      Create or start the environment
+  tunnel [-d]          Start the VS Code tunnel; -d runs it in the background
+  stop                 Stop the environment
+  rm [--purge] [-y]    Remove the container; --purge also deletes the home directory
+  rebuild [--no-mount|--remount]
+                       Pull the image and create the container again; the home stays
+  ls                   List environments
+  config [KEY [VALUE]] Show or set runtime, image or run_args
+  self-update          Install the latest devc
+
+NAME defaults to the current directory's name. A new environment mounts the
+current directory at /workspaces/<dir> unless --no-mount is given.
+EOF
+}
+
+die() {
+	echo "devc: $*" >&2
+	exit 1
+}
+
+conf_get() {
+	if [ -f "$2" ]; then
+		sed -n "s/^$1=//p" "$2" | tail -n 1
+	fi
+}
+
+conf_set() {
+	mkdir -p "${3%/*}"
+	if [ -f "$3" ]; then
+		grep -v "^$1=" "$3" || true
+	fi >"$3.tmp"
+	echo "$1=$2" >>"$3.tmp"
+	mv "$3.tmp" "$3"
+}
+
+check_runtime() {
+	case $1 in
+	podman | docker | container) ;;
+	*) die "runtime must be podman, docker or container, not '$1'" ;;
+	esac
+}
+
+mount_cwd() {
+	case $PWD in
+	*:* | *"
+"*) die "cannot mount a directory whose path has a colon or a newline; use --no-mount" ;;
+	esac
+	mount=$PWD
+}
+
+default_runtime() {
+	r=${DEVC_RUNTIME:-$(conf_get runtime "$config_file")}
+	if [ -z "$r" ]; then
+		for c in podman docker container; do
+			if command -v "$c" >/dev/null; then
+				r=$c
+				break
+			fi
+		done
+	fi
+	[ -n "$r" ] || die "no container runtime found; install podman, docker or container"
+	check_runtime "$r"
+	echo "$r"
+}
+
+load_env() {
+	env_dir=$data_dir/$name
+	env_file=$env_dir/env
+	home=$env_dir/home
+	container=devc-$name
+	image=${DEVC_IMAGE:-$(conf_get image "$config_file")}
+	image=${image:-ghcr.io/brhelwig-dev/dev-container:latest}
+	run_args=$(conf_get run_args "$config_file")
+	if [ -f "$env_file" ]; then
+		runtime=$(conf_get runtime "$env_file")
+		check_runtime "$runtime"
+		mount=$(conf_get mount "$env_file")
+	else
+		runtime=
+		mount=
+	fi
+}
+
+require_env() {
+	[ -f "$env_file" ] || die "no environment $name; run devc up"
+}
+
+rt() {
+	"$runtime" "$@"
+}
+
+state() {
+	case $runtime in
+	container)
+		rt inspect "$container" 2>/dev/null | grep -o '"status" *: *"[a-z]*"' | head -n 1 | sed 's/.*"\([a-z]*\)"$/\1/'
+		;;
+	*)
+		rt inspect -f '{{.State.Status}}' "$container" 2>/dev/null || true
+		;;
+	esac
+}
+
+docker_on_linux() {
+	[ "$runtime" = docker ] && [ "$(uname -s)" = Linux ]
+}
+
+create() {
+	if [ ! -d "$home" ]; then
+		mkdir -p "$home"
+		if docker_on_linux; then
+			rt run --rm -u 0 -v "$home:/h" "$image" chown 1000:1000 /h
+		fi
+	fi
+	set -- -d --name "$container" -e "TUNNEL_NAME=$name" -v "$home:/home/dev"
+	if [ "$runtime" = podman ]; then
+		set -- "$@" --userns=keep-id:uid=1000,gid=1000
+	fi
+	if [ -n "$mount" ]; then
+		set -- "$@" -v "$mount:/workspaces/${mount##*/}"
+	fi
+	# shellcheck disable=SC2086
+	rt run "$@" $run_args "$image" >/dev/null
+}
+
+write_env() {
+	mkdir -p "$env_dir"
+	printf 'runtime=%s\nmount=%s\n' "$runtime" "$mount" >"$env_file"
+}
+
+cmd_up() {
+	if [ ! -f "$env_file" ]; then
+		runtime=$(default_runtime)
+		if [ -z "$no_mount" ]; then
+			mount_cwd
+		fi
+		write_env
+	fi
+	case $(state) in
+	'') create ;;
+	running) ;;
+	*) rt start "$container" >/dev/null ;;
+	esac
+}
+
+cmd_shell() {
+	cmd_up
+	tty=-i
+	if [ -t 0 ]; then
+		tty=-it
+	fi
+	if [ $# -eq 0 ]; then
+		set -- zsh -l
+	fi
+	if [ -n "$mount" ]; then
+		set -- -w "/workspaces/${mount##*/}" "$container" "$@"
+	else
+		set -- "$container" "$@"
+	fi
+	exec "$runtime" exec "$tty" "$@"
+}
+
+cmd_tunnel() {
+	cmd_up
+	if [ -n "$detach" ]; then
+		rt exec -d "$container" vscode-tunnel
+	else
+		exec "$runtime" exec -it "$container" vscode-tunnel
+	fi
+}
+
+cmd_stop() {
+	require_env
+	rt stop "$container" >/dev/null
+}
+
+remove_container() {
+	if [ -n "$(state)" ]; then
+		rt rm -f "$container" >/dev/null
+	fi
+}
+
+cmd_rm() {
+	require_env
+	remove_container
+	if [ -z "$purge" ]; then
+		return
+	fi
+	if [ -z "$yes" ]; then
+		printf 'Delete %s? [y/N] ' "$env_dir"
+		read -r answer
+		case $answer in
+		y | Y | yes) ;;
+		*) die "kept $env_dir" ;;
+		esac
+	fi
+	if docker_on_linux; then
+		rt run --rm -u 0 -v "$env_dir:/d" "$image" rm -rf /d/home
+	fi
+	rm -rf "$env_dir"
+}
+
+cmd_rebuild() {
+	require_env
+	if [ -n "$no_mount" ]; then
+		mount=
+	elif [ -n "$remount" ]; then
+		mount_cwd
+	fi
+	write_env
+	rt image pull "$image" >/dev/null || echo "devc: pull failed; using the local image" >&2
+	remove_container
+	create
+}
+
+cmd_ls() {
+	printf '%-20s %-10s %-10s %s\n' NAME RUNTIME STATE MOUNT
+	for dir in "$data_dir"/*/; do
+		[ -f "${dir}env" ] || continue
+		name=${dir%/}
+		name=${name##*/}
+		load_env
+		printf '%-20s %-10s %-10s %s\n' "$name" "$runtime" "$(state)" "$mount"
+	done
+}
+
+cmd_config() {
+	case $# in
+	0)
+		if [ -f "$config_file" ]; then
+			cat "$config_file"
+		fi
+		;;
+	1) conf_get "$1" "$config_file" ;;
+	2)
+		case $1 in
+		runtime) check_runtime "$2" ;;
+		image | run_args) ;;
+		*) die "unknown key $1; keys are runtime, image and run_args" ;;
+		esac
+		conf_set "$1" "$2" "$config_file"
+		;;
+	*) die "usage: devc config [KEY [VALUE]]" ;;
+	esac
+}
+
+cmd_self_update() {
+	dir=$(cd "$(dirname "$0")" && pwd)
+	script=$(curl -fsSL "$raw_url/cli/install.sh")
+	DEVC_INSTALL_DIR=$dir sh -c "$script"
+}
+
+cmd=shell
+case ${1:-} in
+'' | -*) ;;
+*)
+	cmd=$1
+	shift
+	;;
+esac
+
+name=
+no_mount=
+remount=
+purge=
+yes=
+detach=
+while [ $# -gt 0 ]; do
+	case $1 in
+	-n)
+		[ $# -ge 2 ] || die "-n needs a name"
+		name=$2
+		shift 2
+		;;
+	--no-mount) no_mount=1 && shift ;;
+	--remount) remount=1 && shift ;;
+	--purge) purge=1 && shift ;;
+	-y) yes=1 && shift ;;
+	-d) detach=1 && shift ;;
+	-h | --help) usage && exit ;;
+	--)
+		shift
+		break
+		;;
+	-*) die "unknown option $1" ;;
+	*) break ;;
+	esac
+done
+
+case $cmd in
+shell | config) ;;
+*) [ $# -eq 0 ] || die "unexpected argument $1" ;;
+esac
+
+if [ -z "$name" ]; then
+	name=$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr -c '[:lower:][:digit:]\n-' '-' | cut -c 1-20)
+fi
+case $name in
+'' | *[!a-z0-9-]*) die "name must use only a-z, 0-9 and -" ;;
+esac
+[ ${#name} -le 20 ] || die "name must be at most 20 characters"
+load_env
+
+case $cmd in
+shell) cmd_shell "$@" ;;
+up) cmd_up ;;
+tunnel) cmd_tunnel ;;
+stop) cmd_stop ;;
+rm) cmd_rm ;;
+rebuild) cmd_rebuild ;;
+ls) cmd_ls ;;
+config) cmd_config "$@" ;;
+self-update) cmd_self_update ;;
+help) usage ;;
+*) die "unknown command $cmd; run devc help" ;;
+esac

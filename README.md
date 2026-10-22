@@ -27,6 +27,43 @@ ghcr.io/brhelwig-dev/dev-container:latest
 
 Python comes from `uv python install` when a project needs it.
 
+## devc
+
+`devc` creates, opens and removes environments that use this image, with Podman, Docker
+or Apple `container`. Install it:
+
+```
+curl -fsSL https://raw.githubusercontent.com/brhelwig-dev/dev-container/main/cli/install.sh | sh
+```
+
+Run `devc` in a project directory. It creates an environment named after the directory,
+mounts the directory at `/workspaces/<dir>`, and opens zsh there.
+
+| Command | Does |
+|---|---|
+| `devc` or `devc shell [CMD...]` | Opens zsh, or runs `CMD`, starting the environment first |
+| `devc up [--no-mount]` | Creates or starts the environment; `--no-mount` skips the directory mount |
+| `devc tunnel [-d]` | Starts the VS Code tunnel; `-d` runs it in the background after the first login |
+| `devc stop` | Stops the environment |
+| `devc rm [--purge] [-y]` | Removes the container; `--purge` also deletes its home directory |
+| `devc rebuild [--no-mount\|--remount]` | Pulls the image and creates the container again; the home stays |
+| `devc ls` | Lists environments |
+| `devc config [KEY [VALUE]]` | Shows or sets `runtime`, `image` or `run_args` |
+| `devc self-update` | Installs the latest `devc` |
+
+`-n NAME` selects another environment. Each environment has its own home directory in
+`~/.local/share/devc/<name>/home`, mounted at `/home/dev`. Mounts are fixed when the
+container is created; `devc rebuild --remount` mounts the current directory instead.
+
+`devc config runtime podman` (or `docker`, or `container`) picks the runtime. Without it,
+`devc` uses the first one it finds in that order. An environment keeps the runtime it was
+created with. `run_args` adds arguments to the create command. Apple `container` gives a
+container 1 GiB of memory by default, so set for example
+`devc config run_args '--memory 8g --cpus 4'`.
+
+With Docker on Linux, `devc` makes uid 1000 the owner of the home directory. Your project
+directory is mounted as is, so the container can write to it only when your uid is 1000.
+
 ## Run
 
 The image runs as user `dev` (uid 1000) and idles until you open a shell or start the tunnel.
